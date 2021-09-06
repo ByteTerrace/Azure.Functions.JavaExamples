@@ -25,6 +25,8 @@ import reactor.core.Disposable;
 
 /*
     http://localhost:7071/runtime/webhooks/EventGrid?functionName=EventGridMonitor
+
+    FUNCTIONS_WORKER_JAVA_LOAD_APP_LIBS = 1
  */
 public class EventGridMonitor {
     private static final int BufferSize = 16384;

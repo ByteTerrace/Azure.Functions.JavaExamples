@@ -1,5 +1,5 @@
 {
-  "azureFunctions.deploySubpath": "target/azure-functions/AzureFunctionViaJava",
+  "azureFunctions.deploySubpath": "target/azure-functions/JavaExamples",
   "azureFunctions.projectLanguage": "Java",
   "azureFunctions.projectRuntime": "~3",
   "debug.internalConsoleOptions": "neverOpen",
