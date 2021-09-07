@@ -30,8 +30,6 @@ import reactor.core.publisher.Mono;
     FUNCTIONS_WORKER_JAVA_LOAD_APP_LIBS = 1
  */
 public class EventGridMonitor {
-    private static final String StorageAccountName = "byteterrace";
-    private static final String StorageAccountEndpoint = String.format(Locale.ROOT, "https://%s.blob.core.windows.net", StorageAccountName);
     private static final Charset Utf8Charset = StandardCharsets.UTF_8;
     private static final TokenCredential TokenCredential = new DefaultAzureCredentialBuilder().build();
 
@@ -86,10 +84,11 @@ public class EventGridMonitor {
         final Logger logger = context.getLogger();
         final String eventSubject = event.subject.substring(nthIndexOf(event.subject, '/', 4) + 1);
         final String containerName = eventSubject.split("/")[0];
+        final String storageAccountName = event.topic.substring(nthIndexOf(event.topic, '/', 8) + 1);
         final String blobPath = eventSubject.substring(nthIndexOf(eventSubject, '/', 2) + 1);
         final BlobServiceAsyncClient blobServiceClient = new BlobServiceClientBuilder()
             .credential(TokenCredential)
-            .endpoint(StorageAccountEndpoint)
+            .endpoint(String.format(Locale.ROOT, "https://%s.blob.core.windows.net", storageAccountName))
             .buildAsyncClient();
         final BlobContainerAsyncClient containerClient = blobServiceClient.getBlobContainerAsyncClient(containerName);
         final BlobAsyncClient blobClient = containerClient.getBlobAsyncClient(blobPath);
