@@ -21,10 +21,10 @@ public final class LineReaderState {
             boolean isAdditionalDecodingRequired = false;
             boolean isNewLineCharacterHandlingEnabled = state.getIsNewLineCharacterHandlingEnabled();
 
-            do {
-                encodedBlock.put(input);
-                encodedBlock.flip();
+            encodedBlock.put(input);
+            encodedBlock.flip();
 
+            do {
                 try {
                     final CoderResult decodeResult = charsetDecoder.decode(encodedBlock, decodedBlock, false);
 
@@ -60,8 +60,6 @@ public final class LineReaderState {
                         }
 
                         stringBuilder.append(a, p, (l - p));
-                        decodedBlock.position(l);
-                        encodedBlock.compact();
                         decodedBlock.clear();
                     }
                     else {
@@ -71,6 +69,8 @@ public final class LineReaderState {
                 catch (final CharacterCodingException e) {
                     throw new UncheckedCharacterCodingException(e);
                 }
+
+                encodedBlock.compact();
             } while (isAdditionalDecodingRequired);
 
             state.setIsNewLineCharacterHandlingEnabled(isNewLineCharacterHandlingEnabled);
