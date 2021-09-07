@@ -69,10 +69,9 @@ public final class LineReaderState {
                 catch (final CharacterCodingException e) {
                     throw new UncheckedCharacterCodingException(e);
                 }
-
-                encodedBlock.compact();
             } while (isAdditionalDecodingRequired);
 
+            encodedBlock.compact();
             state.setIsNewLineCharacterHandlingEnabled(isNewLineCharacterHandlingEnabled);
 
             return state;
