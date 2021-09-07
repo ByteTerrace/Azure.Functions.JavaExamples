@@ -16,6 +16,7 @@ public final class LineReaderState {
             final CharsetDecoder charsetDecoder = state.getCharsetDecoder();
             final CharBuffer decodedBlock = state.getDecodedBlock();
             final ByteBuffer encodedBlock = state.getEncodedBlock();
+            final Consumer<String> lineConsumer = state.getLineConsumer();
             final StringBuilder stringBuilder = state.getStringBuilder();
 
             boolean isAdditionalDecodingRequired = false;
@@ -45,14 +46,18 @@ public final class LineReaderState {
 
                                 if ('\r' != c) {
                                     if (('\n' == c) && isNewLineCharacterHandlingEnabled) {
-                                        state.emitLine(a, p, ((o - p) - 1));
+                                        stringBuilder.append(a, p, ((o - p) - 1));
+                                        lineConsumer.accept(stringBuilder.toString());
+                                        stringBuilder.setLength(0);
                                         p = o;
                                     }
 
                                     isNewLineCharacterHandlingEnabled = true;
                                 }
                                 else {
-                                    state.emitLine(a, p, ((o - p) - 1));
+                                    stringBuilder.append(a, p, ((o - p) - 1));
+                                    lineConsumer.accept(stringBuilder.toString());
+                                    stringBuilder.setLength(0);
                                     p = o;
                                     isNewLineCharacterHandlingEnabled = false;
                                 }
@@ -101,6 +106,9 @@ public final class LineReaderState {
     public void setIsNewLineCharacterHandlingEnabled(boolean value) {
         m_isNewLineCharacterHandlingEnabled = value;
     }
+    public Consumer<String> getLineConsumer() {
+        return m_lineConsumer;
+    }
     public StringBuilder getStringBuilder() {
         return m_stringBuilder;
     }
@@ -118,14 +126,5 @@ public final class LineReaderState {
         m_stringBuilder = new StringBuilder(137);
 
         setIsNewLineCharacterHandlingEnabled(false);
-    }
-
-    public void emitLine() {
-        m_lineConsumer.accept(m_stringBuilder.toString());
-        m_stringBuilder.setLength(0);
-    }
-    public void emitLine(char[] buffer, int offset, int length) {
-        m_stringBuilder.append(buffer, offset, length);
-        emitLine();
     }
 }

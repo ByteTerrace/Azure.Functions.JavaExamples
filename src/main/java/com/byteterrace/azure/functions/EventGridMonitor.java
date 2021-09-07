@@ -51,9 +51,9 @@ public class EventGridMonitor {
                 final int p = finalDecodedBlock.position();
 
                 stringBuilder.append(finalDecodedBlock.array(), p, (l - p));
-                finalDecodedBlock.position(l);
-                state.emitLine();
+                state.getLineConsumer().accept(stringBuilder.toString());
                 stringBuilder.setLength(0);
+                finalDecodedBlock.position(l);
 
                 return state;
             });
