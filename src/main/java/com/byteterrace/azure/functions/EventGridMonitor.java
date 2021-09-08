@@ -16,11 +16,12 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Function;
 import java.util.Locale;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
+import reactor.util.function.Tuples;
 
 /*
     http://localhost:7071/runtime/webhooks/EventGrid?functionName=EventGridMonitor
@@ -86,29 +87,31 @@ public class EventGridMonitor {
         logger.info(String.format(DefaultLocale, "Blob lease acquired (id: %s).", blobLeaseId));
 
         try {
-            final AtomicBoolean isWindowClosed = new AtomicBoolean(true); // TODO: Research whether this is a terrible idea or not...
+            final Sinks.Many<Boolean> isWindowClosedSink = Sinks
+                .many()
+                .unicast()
+                .onBackpressureBuffer();
+
+            isWindowClosedSink.tryEmitNext(true);
 
             final Disposable processBlobOperation = blobClient
                 .downloadStream()
                 .transform(createLineReader(16384, DefaultCharset))
-                .windowUntil(line -> {
-                    if ((line.codePoints().filter(codePoint -> (codePoint == '"')).count() & 1) == 1) {
-                        if (!isWindowClosed.get()) {
-                            isWindowClosed.set(true);
+                .withLatestFrom(isWindowClosedSink.asFlux(), (line, isWindowClosed) -> Tuples.of(line, isWindowClosed))
+                .windowUntil(t -> {
+                    final Boolean isWindowClosed = t.getT2();
 
-                            return true;
-                        }
-                        else {
-                            isWindowClosed.set(false);
+                    if ((t.getT1().codePoints().filter(codePoint -> (codePoint == '"')).count() & 1) == 1) {
+                        isWindowClosedSink.tryEmitNext(!isWindowClosed);
 
-                            return false;
-                        }
+                        return !isWindowClosed;
                     }
 
-                    return isWindowClosed.get();
+                    return isWindowClosed;
                 })
-                .flatMap(chunks -> chunks.reduce("", (x, y) -> (x + y)))
+                .flatMap(chunks -> chunks.reduce("", (x, y) -> (x + y.getT1())))
                 .doOnNext(logger::info)
+                .doFinally(signalType -> isWindowClosedSink.tryEmitComplete())
                 .subscribe();
 
             do {
