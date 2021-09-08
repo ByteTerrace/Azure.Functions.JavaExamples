@@ -33,6 +33,32 @@ public class EventGridMonitor {
     private static final Locale DefaultLocale = Locale.ROOT;
     private static final TokenCredential TokenCredential = new DefaultAzureCredentialBuilder().build();
 
+    private static Function<Flux<String>, Flux<String>> createCsvReader() {
+        final Sinks.Many<Boolean> isWindowClosedSink = Sinks
+            .many()
+            .unicast()
+            .onBackpressureBuffer();
+
+        isWindowClosedSink.tryEmitNext(true);
+
+        return (lines) -> {
+            return lines
+                .withLatestFrom(isWindowClosedSink.asFlux(), Tuples::of)
+                .windowUntil(t -> {
+                    Boolean isWindowClosed = t.getT2();
+
+                    if ((t.getT1().codePoints().filter(codePoint -> (codePoint == '"')).count() & 1) == 1) {
+                        isWindowClosed = !isWindowClosed;
+
+                        isWindowClosedSink.tryEmitNext(isWindowClosed);
+                    }
+
+                    return isWindowClosed;
+                })
+                .flatMap(chunks -> chunks.reduce("", (x, y) -> (x + y.getT1())))
+                .doFinally(signalType -> isWindowClosedSink.tryEmitComplete());
+        };
+    }
     private static Function<Flux<ByteBuffer>, Flux<String>> createLineReader(int bufferSize, Charset charset) {
         final LineReaderState lineReaderState = new LineReaderState(bufferSize, charset);
 
@@ -87,31 +113,11 @@ public class EventGridMonitor {
         logger.info(String.format(DefaultLocale, "Blob lease acquired (id: %s).", blobLeaseId));
 
         try {
-            final Sinks.Many<Boolean> isWindowClosedSink = Sinks
-                .many()
-                .unicast()
-                .onBackpressureBuffer();
-
-            isWindowClosedSink.tryEmitNext(true);
-
             final Disposable processBlobOperation = blobClient
                 .downloadStream()
                 .transform(createLineReader(16384, DefaultCharset))
-                .withLatestFrom(isWindowClosedSink.asFlux(), Tuples::of)
-                .windowUntil(t -> {
-                    Boolean isWindowClosed = t.getT2();
-
-                    if ((t.getT1().codePoints().filter(codePoint -> (codePoint == '"')).count() & 1) == 1) {
-                        isWindowClosed = !isWindowClosed;
-
-                        isWindowClosedSink.tryEmitNext(isWindowClosed);
-                    }
-
-                    return isWindowClosed;
-                })
-                .flatMap(chunks -> chunks.reduce("", (x, y) -> (x + y.getT1())))
+                .transform(createCsvReader())
                 .doOnNext(logger::info)
-                .doFinally(signalType -> isWindowClosedSink.tryEmitComplete())
                 .subscribe();
 
             do {
