@@ -16,6 +16,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.function.Function;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
@@ -85,9 +86,29 @@ public class EventGridMonitor {
         logger.info(String.format(DefaultLocale, "Blob lease acquired (id: %s).", blobLeaseId));
 
         try {
+            final AtomicBoolean isWindowClosed = new AtomicBoolean(true); // TODO: Research whether this is a terrible idea or not...
+
             final Disposable processBlobOperation = blobClient
                 .downloadStream()
                 .transform(createLineReader(16384, DefaultCharset))
+                .windowUntil(line -> {
+                    if ((line.codePoints().filter(codePoint -> (codePoint == '"')).count() & 1) == 1) {
+                        if (!isWindowClosed.get()) {
+                            isWindowClosed.set(true);
+
+                            return true;
+                        }
+                        else {
+                            isWindowClosed.set(false);
+
+                            return false;
+                        }
+                    }
+
+                    return isWindowClosed.get();
+                })
+                .flatMap(chunks -> chunks.reduce("", (x, y) -> (x + y)))
+                .doOnNext(logger::info)
                 .subscribe();
 
             do {
