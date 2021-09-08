@@ -97,7 +97,7 @@ public class EventGridMonitor {
             final Disposable processBlobOperation = blobClient
                 .downloadStream()
                 .transform(createLineReader(16384, DefaultCharset))
-                .withLatestFrom(isWindowClosedSink.asFlux(), (line, isWindowClosed) -> Tuples.of(line, isWindowClosed))
+                .withLatestFrom(isWindowClosedSink.asFlux(), Tuples::of)
                 .windowUntil(t -> {
                     Boolean isWindowClosed = t.getT2();
 
