@@ -99,12 +99,12 @@ public class EventGridMonitor {
                 .transform(createLineReader(16384, DefaultCharset))
                 .withLatestFrom(isWindowClosedSink.asFlux(), (line, isWindowClosed) -> Tuples.of(line, isWindowClosed))
                 .windowUntil(t -> {
-                    final Boolean isWindowClosed = t.getT2();
+                    Boolean isWindowClosed = t.getT2();
 
                     if ((t.getT1().codePoints().filter(codePoint -> (codePoint == '"')).count() & 1) == 1) {
-                        isWindowClosedSink.tryEmitNext(!isWindowClosed);
+                        isWindowClosed = !isWindowClosed;
 
-                        return !isWindowClosed;
+                        isWindowClosedSink.tryEmitNext(isWindowClosed);
                     }
 
                     return isWindowClosed;
