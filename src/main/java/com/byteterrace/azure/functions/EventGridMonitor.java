@@ -33,20 +33,10 @@ import reactor.core.publisher.Mono;
     FUNCTIONS_WORKER_JAVA_LOAD_APP_LIBS = 1
  */
 public class EventGridMonitor {
-    private static final Charset Utf8Charset = StandardCharsets.UTF_8;
+    private static final Charset DefaultCharset = StandardCharsets.UTF_8;
+    private static final Locale DefaultLocale = Locale.ROOT;
     private static final TokenCredential TokenCredential = new DefaultAzureCredentialBuilder().build();
 
-    private static String appendFieldChunk(final String fieldValue, final String chunkValue, final int chunkStartIndex, final int chunkLength) {
-        if (0 < chunkLength) {
-            return (fieldValue + chunkValue.substring(chunkStartIndex, (chunkStartIndex + chunkLength)));
-        }
-        else {
-            return fieldValue;
-        }
-    }
-    private static void appendFieldValue(final List<String> fieldValues, final String fieldValue, final char escapeChar) {
-        fieldValues.add(((1 < fieldValue.length()) || ((0 < fieldValue.length()) && (fieldValue.charAt(0) != escapeChar)) ? fieldValue : null));
-    }
     private static Function<Flux<ByteBuffer>, Flux<String>> createLineReader(int bufferSize, Charset charset) {
         final Mono<LineReaderState> lineReaderState = Mono.just(new LineReaderState(bufferSize, charset));
 
@@ -85,23 +75,17 @@ public class EventGridMonitor {
                                     do {
                                         final int c = a[o++];
 
-                                        if ('\r' != c) {
-                                            if (('\n' == c) && isNewLineCharacterHandlingEnabled) {
+                                        if (('\n' == c) || ('\r' == c)) {
+                                            if (isNewLineCharacterHandlingEnabled) {
                                                 stringBuilder.append(a, p, ((o - p) - 1));
                                                 lines.add(stringBuilder.toString());
                                                 stringBuilder.setLength(0);
-                                                p = o;
                                             }
 
-                                            isNewLineCharacterHandlingEnabled = true;
-                                        }
-                                        else {
-                                            stringBuilder.append(a, p, ((o - p) - 1));
-                                            lines.add(stringBuilder.toString());
-                                            stringBuilder.setLength(0);
                                             p = o;
-                                            isNewLineCharacterHandlingEnabled = false;
                                         }
+
+                                        isNewLineCharacterHandlingEnabled = ('\r' != c);
                                     } while (o < l);
                                 }
 
@@ -162,51 +146,6 @@ public class EventGridMonitor {
 
         return index;
     }
-    private static List<String> split(final char delimitChar, final char quoteChar, final String lineValue) {
-        if (null != lineValue) {
-            final int lineLength = lineValue.length();
-            final List<String> recordValue = new ArrayList<>();
-
-            int fieldHead = 0;
-            int fieldTail = 0;
-            String fieldValue = "";
-            boolean isQuoted = false;
-
-            while (fieldTail < lineLength) {
-                char currentChar = lineValue.charAt(fieldTail++);
-
-                if (currentChar == quoteChar) {
-                    fieldValue = appendFieldChunk(fieldValue, lineValue, fieldHead, (fieldTail - fieldHead - 1));
-
-                    if ((fieldTail < lineLength) && (lineValue.charAt(fieldTail) == quoteChar)) {
-                        fieldValue += quoteChar;
-                        fieldTail++;
-                    }
-                    else {
-                        isQuoted = !isQuoted;
-                    }
-
-                    fieldHead = fieldTail;
-                }
-
-                if (!isQuoted && (currentChar == delimitChar)) {
-                    fieldValue = appendFieldChunk(fieldValue, lineValue, fieldHead, (fieldTail - fieldHead - 1));
-                    appendFieldValue(recordValue, fieldValue, quoteChar);
-
-                    fieldHead = fieldTail;
-                    fieldValue = "";
-                }
-            }
-
-            fieldValue = appendFieldChunk(fieldValue, lineValue, fieldHead, (fieldTail - fieldHead));
-            appendFieldValue(recordValue, fieldValue, quoteChar);
-
-            return recordValue;
-        }
-        else {
-            return null;
-        }
-    }
 
     @FunctionName("EventGridMonitor")
     public void run(
@@ -223,7 +162,7 @@ public class EventGridMonitor {
         final String blobPath = eventSubject.substring(nthIndexOf(eventSubject, '/', 2) + 1);
         final BlobServiceAsyncClient blobServiceClient = new BlobServiceClientBuilder()
             .credential(TokenCredential)
-            .endpoint(String.format(Locale.ROOT, "https://%s.blob.core.windows.net", storageAccountName))
+            .endpoint(String.format(DefaultLocale, "https://%s.blob.core.windows.net", storageAccountName))
             .buildAsyncClient();
         final BlobContainerAsyncClient containerClient = blobServiceClient.getBlobContainerAsyncClient(containerName);
         final BlobAsyncClient blobClient = containerClient.getBlobAsyncClient(blobPath);
@@ -234,17 +173,12 @@ public class EventGridMonitor {
             .acquireLease(-1)
             .block();
 
-        logger.info("Blob lease id: " + blobLeaseId);
+        logger.info(String.format(DefaultLocale, "Blob lease acquired (id: %s).", blobLeaseId));
 
         try {
             final Disposable processBlobOperation = blobClient
                 .downloadStream()
-                .transform(createLineReader(16384, Utf8Charset))
-                .map(line -> split(',', '"', line))
-                .doOnNext(lines -> logger.info(lines.get(0)))
-                .doFinally(signalType -> {
-                    logger.info("Processed blob: " + event.subject);
-                })
+                .transform(createLineReader(16384, DefaultCharset))
                 .subscribe();
 
             do {
@@ -259,6 +193,7 @@ public class EventGridMonitor {
             blobLeaseClient
                 .releaseLease()
                 .block();
+            logger.info(String.format(DefaultLocale, "Blob lease released (id: %s).", blobLeaseId));
         }
     }
 }
