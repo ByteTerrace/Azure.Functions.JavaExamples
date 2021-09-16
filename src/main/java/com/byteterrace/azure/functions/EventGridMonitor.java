@@ -11,10 +11,18 @@ import com.azure.storage.blob.specialized.BlobLeaseClientBuilder;
 import com.microsoft.azure.functions.annotation.FunctionName;
 import com.microsoft.azure.functions.annotation.EventGridTrigger;
 import com.microsoft.azure.functions.ExecutionContext;
+import com.microsoft.sqlserver.jdbc.ISQLServerBulkData;
+import com.microsoft.sqlserver.jdbc.SQLServerBulkCopy;
+import com.microsoft.sqlserver.jdbc.SQLServerBulkCopyOptions;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.function.Function;
+import java.util.List;
 import java.util.Locale;
 import java.util.logging.Logger;
 import reactor.core.Disposable;
@@ -33,7 +41,30 @@ public class EventGridMonitor {
     private static final Locale DefaultLocale = Locale.ROOT;
     private static final TokenCredential TokenCredential = new DefaultAzureCredentialBuilder().build();
 
-    private static Function<Flux<String>, Flux<String>> createCsvReader() {
+    private static String appendFieldChunk(final String fieldValue, final String chunkValue, final int chunkStartIndex, final int chunkLength) {
+        if (0 < chunkLength) {
+            return (fieldValue + chunkValue.substring(chunkStartIndex, (chunkStartIndex + chunkLength)));
+        }
+        else {
+            return fieldValue;
+        }
+    }
+    private static void appendFieldValue(final List<String> fieldValues, final String fieldValue, final char escapeChar) {
+        fieldValues.add(((1 < fieldValue.length()) || ((0 < fieldValue.length()) && (fieldValue.charAt(0) != escapeChar)) ? fieldValue : null));
+    }
+    public static void bulkInsertMsSql(final String connectionString, final String userName, final String userPassword, final String tableName, final SQLServerBulkCopyOptions bulkCopyOptions, final ISQLServerBulkData records) throws ClassNotFoundException, SQLException {
+        final String driverClassName = "com.microsoft.sqlserver.jdbc.SQLServerDriver";
+
+        try (
+            final Connection dbConnection = openConnection(driverClassName, connectionString, userName, userPassword);
+            final SQLServerBulkCopy dbBulkCopy = new SQLServerBulkCopy(dbConnection);
+        ) {
+            dbBulkCopy.setBulkCopyOptions(bulkCopyOptions);
+            dbBulkCopy.setDestinationTableName(tableName);
+            dbBulkCopy.writeToServer(records);
+        }
+    }
+    private static Function<Flux<String>, Flux<List<String>>> createCsvReader() {
         final Sinks.Many<Boolean> isWindowClosedSink = Sinks
             .many()
             .unicast()
@@ -56,6 +87,7 @@ public class EventGridMonitor {
                     return isWindowClosed;
                 })
                 .flatMap(chunks -> chunks.reduce("", (x, y) -> (x + y.getT1())))
+                .map(line -> split(',', '"', line))
                 .doFinally(signalType -> isWindowClosedSink.tryEmitComplete());
         };
     }
@@ -82,6 +114,61 @@ public class EventGridMonitor {
         } while (++count < n);
 
         return index;
+    }
+    public static Connection openConnection(final String driverClassName, final String connectionString, final String userName, final String password) throws ClassNotFoundException, SQLException {
+        Class.forName(driverClassName);
+        return DriverManager.getConnection(connectionString, userName, password);
+    }
+    private static List<String> split(final char delimitChar, final char quoteChar, final String lineValue) {
+        if (null != lineValue) {
+            final int lineLength = lineValue.length();
+            final List<String> recordValue = new ArrayList<>();
+
+            int fieldHead = 0;
+            int fieldTail = 0;
+            String fieldValue = "";
+            boolean isQuoted = false;
+
+            while (fieldTail < lineLength) {
+                char currentChar = lineValue.charAt(fieldTail++);
+
+                if (currentChar == quoteChar) {
+                    fieldValue = appendFieldChunk(fieldValue, lineValue, fieldHead, (fieldTail - fieldHead - 1));
+
+                    if ((fieldTail < lineLength) && (lineValue.charAt(fieldTail) == quoteChar)) {
+                        fieldValue += quoteChar;
+                        fieldTail++;
+                    }
+                    else {
+                        isQuoted = !isQuoted;
+                    }
+
+                    fieldHead = fieldTail;
+                }
+
+                if (!isQuoted && (currentChar == delimitChar)) {
+                    fieldValue = appendFieldChunk(fieldValue, lineValue, fieldHead, (fieldTail - fieldHead - 1));
+                    appendFieldValue(recordValue, fieldValue, quoteChar);
+
+                    fieldHead = fieldTail;
+                    fieldValue = "";
+                }
+            }
+
+            fieldValue = appendFieldChunk(fieldValue, lineValue, fieldHead, (fieldTail - fieldHead));
+            appendFieldValue(recordValue, fieldValue, quoteChar);
+
+            return recordValue;
+        }
+        else {
+            return null;
+        }
+    }
+
+    private static Function<Flux<List<String>>, Flux<SomePojo>> mapPojo() {
+        return (rows) -> {
+            return rows.map(SomePojo::new);
+        };
     }
 
     @FunctionName("EventGridMonitor")
@@ -113,17 +200,19 @@ public class EventGridMonitor {
         logger.info(String.format(DefaultLocale, "Blob lease acquired (id: %s).", blobLeaseId));
 
         try {
-            final Disposable processBlobOperation = blobClient
+            final Flux<List<String>> csvRows = blobClient
                 .downloadStream()
                 .transform(createLineReader(16384, DefaultCharset))
-                .transform(createCsvReader())
-                .doOnNext(logger::info)
-                .subscribe();
+                .transform(createCsvReader());
 
-            do {
-                Thread.sleep(743);
-            }
-            while (!processBlobOperation.isDisposed());
+            final SqlServerBulkDataT sqlServerBulkDataT = new SqlServerBulkDataT(csvRows.toIterable());
+
+            bulkInsertMsSql(null, null, null, null, sqlServerBulkDataT);
+
+            //do {
+            //    Thread.sleep(743);
+            //}
+            //while (!processBlobOperation.isDisposed());
         }
         catch (final InterruptedException e) {
             throw new UncheckedInterruptedException(e);

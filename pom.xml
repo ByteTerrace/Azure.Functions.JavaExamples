@@ -24,6 +24,12 @@
             <version>${azure.functions.java.library.version}</version>
         </dependency>
 
+        <dependency>
+            <artifactId>mssql-jdbc</artifactId>
+            <groupId>com.microsoft.sqlserver</groupId>
+            <version>9.4.0.jre8</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <artifactId>junit-jupiter</artifactId>
